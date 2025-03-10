@@ -1,0 +1,11 @@
+transformers
+huggingface-hub
+moviepy==1.0.3
+pillow
+decord
+librosa
+mediapipe
+numpy==1.25.2
+opencv-python
+torch
+torchvision

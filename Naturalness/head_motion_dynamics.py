@@ -255,4 +255,4 @@ if __name__ == "__main__":
     main()
 
 
-# python head_motion_dynamics.py --video_txt ../input.txt --model_path facexformer/ckpts/model.pt --output_txt output.txt --device cuda:0
+# python head_motion_dynamics.py --video_txt ../input.txt --model_path ../models/facexformer/ckpts/model.pt --output_txt output.txt --device cuda:0
