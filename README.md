@@ -17,7 +17,7 @@ This repository contains the official implementation  for the paper "THEval - Ev
 
 
 ## 🔥 Updates
-- [03/2025] **Code released !** 
+- [03/2025] **Code released and [project page](https://newbyl.github.io/THEval_Project_Page) released !** 
 
 ## Overview 
 
