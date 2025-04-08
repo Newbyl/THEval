@@ -6,11 +6,10 @@ from tqdm import tqdm
 import mediapipe as mp
 import csv
 from pydub import AudioSegment
-from pydub.silence import detect_silence
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 
 MAX_FRAMES_PER_SEGMENT = 500
 MIN_SILENCE_DURATION = 750
-SILENCE_THRESHOLD = -30
 
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
@@ -19,6 +18,9 @@ face_mesh = mp_face_mesh.FaceMesh(
     refine_landmarks=True,
     min_detection_confidence=0.5
 )
+
+# Initialize Silero-VAD model
+vad_model = load_silero_vad()
 
 def extract_audio(video_path):
     try:
@@ -31,22 +33,57 @@ def detect_silence_frames(audio_segment, frame_rate, total_frames):
     if audio_segment is None:
         return set()
 
-    silence_intervals = detect_silence(
-        audio_segment,
-        min_silence_len=MIN_SILENCE_DURATION,
-        silence_thresh=SILENCE_THRESHOLD
+    # Convert audio segment to WAV format and save temporarily
+    temp_wav = "temp_audio.wav"
+    audio_segment.export(temp_wav, format="wav")
+    
+    # Read audio using Silero-VAD
+    wav = read_audio(temp_wav)
+    
+    # Get speech timestamps
+    speech_timestamps = get_speech_timestamps(
+        wav,
+        vad_model,
+        return_seconds=True
     )
-
-    silence_frames = set()
-    for start_ms, end_ms in silence_intervals:
-        start_frame = int((start_ms / 1000) * frame_rate)
-        end_frame = int((end_ms / 1000) * frame_rate)
-        silence_frames.update(range(
-            max(0, start_frame),
-            min(total_frames, end_frame + 1)
-        ))
-
-    return silence_frames
+    
+    # Clean up temporary file
+    os.remove(temp_wav)
+    
+    # Convert speech timestamps to silence frames
+    silence_frames = set(range(total_frames))  # Start with all frames as silent
+    
+    # Remove frames that contain speech
+    for speech_segment in speech_timestamps:
+        start_frame = int(speech_segment['start'] * frame_rate)
+        end_frame = int(speech_segment['end'] * frame_rate)
+        for frame in range(start_frame, end_frame + 1):
+            if frame in silence_frames:
+                silence_frames.remove(frame)
+    
+    # Filter out very short silence periods
+    filtered_silence_frames = set()
+    current_silence_start = None
+    current_silence_count = 0
+    
+    for frame in sorted(silence_frames):
+        if current_silence_start is None:
+            current_silence_start = frame
+            current_silence_count = 1
+        elif frame == current_silence_start + current_silence_count:
+            current_silence_count += 1
+        else:
+            # Check if the silence period is long enough
+            if current_silence_count >= (MIN_SILENCE_DURATION / 1000 * frame_rate):
+                filtered_silence_frames.update(range(current_silence_start, current_silence_start + current_silence_count))
+            current_silence_start = frame
+            current_silence_count = 1
+    
+    # Check the last silence period
+    if current_silence_count >= (MIN_SILENCE_DURATION / 1000 * frame_rate):
+        filtered_silence_frames.update(range(current_silence_start, current_silence_start + current_silence_count))
+    
+    return filtered_silence_frames
 
 def calculate_lip_average_distance(frame, frame_size):
     results = face_mesh.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
