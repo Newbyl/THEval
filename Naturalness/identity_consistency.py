@@ -6,16 +6,20 @@ import numpy as np
 from tqdm import tqdm
 from typing import List, Tuple, Optional
 from facenet_pytorch import MTCNN
-from transformers import AutoImageProcessor, AutoModel
 from PIL import Image
 from itertools import islice
 
+# Add AdaFace to path and imports
+sys.path.append('../models/AdaFace')
+#print(sys.path.remove("/lustre/fswork/projects/rech/vra/uuf71dx/talking_heads/THEval/models/facexformer"))
+from inference import load_pretrained_model, to_input
 
 MAX_FRAMES_PER_SEGMENT = 500
 NUM_SEGMENTS = 1
 FRAME_THRESHOLD = MAX_FRAMES_PER_SEGMENT * NUM_SEGMENTS
 
 BATCH_SIZE = 128
+THRESHOLD = 0.4  # New threshold for frame‐wise identity check (similarity)
 
 
 def read_video_paths(txt_file: str) -> List[str]:
@@ -32,62 +36,39 @@ def read_video_paths(txt_file: str) -> List[str]:
     
     return video_paths
 
-def initialize_models(device: torch.device) -> Tuple[MTCNN, AutoModel, AutoImageProcessor]:
+def initialize_models(device: torch.device) -> Tuple[MTCNN, torch.nn.Module]:
     mtcnn = MTCNN(keep_all=False, device=device, post_process=False)
-    
-    processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
-    print(f"Loaded processor type: {type(processor)}")
-    
-    model = AutoModel.from_pretrained('facebook/dinov2-base').to(device).eval()
-    return mtcnn, model, processor
+    model = load_pretrained_model('ir_50').to(device).eval()
+    return mtcnn, model
 
 
-
-def extract_face_embeddings_batch(frames: List[np.ndarray], mtcnn: MTCNN, processor: AutoImageProcessor, 
-                                model: AutoModel, device: torch.device) -> List[Optional[np.ndarray]]:
+def extract_face_embeddings_batch(frames: List[np.ndarray], mtcnn: MTCNN, model: torch.nn.Module, device: torch.device) -> List[Optional[np.ndarray]]:
     frames_rgb = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in frames]
     pil_images = [Image.fromarray(img) for img in frames_rgb]
     
     with torch.no_grad():
         boxes, _ = mtcnn.detect(pil_images)
-    
-    embeddings_list = [None] * len(frames)
-    
+
+    embeddings = [None] * len(frames)
     for idx, box in enumerate(boxes):
         try:
             if box is None or len(box) == 0:
                 continue
-                
-            box = box[0]
-            x1, y1, x2, y2 = map(int, box)
-            face = frames_rgb[idx][y1:y2, x1:x2]
-            
-            if face.size == 0:
+            x1, y1, x2, y2 = map(int, box[0])
+            face_rgb = frames_rgb[idx][y1:y2, x1:x2]
+            if face_rgb.size == 0:
                 continue
-                
-            if len(face.shape) == 2:
-                face = np.stack([face]*3, axis=-1)
-            elif face.shape[2] == 1:
-                face = np.repeat(face, 3, axis=-1)
-            elif face.shape[2] == 4:
-                face = cv2.cvtColor(face, cv2.COLOR_RGBA2RGB)
-            
-            if face.shape[2] != 3:
-                continue
-                
+            face_pil = Image.fromarray(face_rgb)  # PIL expects RGB
+            # resize to model's expected input
+            face_pil = face_pil.resize((112, 112))
+            inp = to_input(face_pil).to(device)   # normalizes to BGR internally
             with torch.no_grad():
-                inputs = processor(images=Image.fromarray(face), return_tensors="pt").to(device)
-                outputs = model(**inputs)
-                embedding = outputs.last_hidden_state.mean(dim=1).cpu().numpy().flatten()
-            
-            embeddings_list[idx] = embedding
-            
+                feat, _ = model(inp)
+            embeddings[idx] = feat.cpu().numpy().flatten()
         except Exception as e:
-            print(f"Error processing frame {idx}: {str(e)}")
-            embeddings_list[idx] = None
-            continue
-            
-    return embeddings_list
+            print(f"Error processing frame {idx}: {e}")
+            embeddings[idx] = None
+    return embeddings
 
 
 def compute_cosine_distance(embedding1: np.ndarray, embedding2: np.ndarray) -> float:
@@ -109,7 +90,7 @@ def batched(iterable, n=1):
             break
         yield batch
 
-def process_video_segment(video_path: str, start_frame: int, end_frame: int, mtcnn: MTCNN, model: AutoModel, processor: AutoImageProcessor, device: torch.device, batch_size: int = BATCH_SIZE) -> float:
+def process_video_segment(video_path: str, start_frame: int, end_frame: int, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, batch_size: int = BATCH_SIZE) -> float:
     if not os.path.exists(video_path):
         print(f"Warning: Video file '{video_path}' does not exist. Skipping segment.")
         return np.nan
@@ -120,120 +101,49 @@ def process_video_segment(video_path: str, start_frame: int, end_frame: int, mtc
         return np.nan
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    frames_to_process = end_frame - start_frame
-    embedding_distances = []
-    prev_embedding = None
     frame_idx = start_frame
+    same_count = 0
+    total_count = 0
+    key_emb = None  # first valid embedding as reference
 
-    with tqdm(total=frames_to_process, desc=f"Processing {os.path.basename(video_path)} Frames {start_frame}-{end_frame}", leave=False) as pbar:
+    with tqdm(total=end_frame - start_frame, leave=False) as pbar:
         while frame_idx < end_frame:
-            batch_frames = []
-            batch_end = min(frame_idx + batch_size, end_frame)
-            num_frames_in_batch = batch_end - frame_idx
-
-            for _ in range(num_frames_in_batch):
-                ret, frame = cap.read()
+            batch = []
+            for _ in range(min(batch_size, end_frame - frame_idx)):
+                ret, frm = cap.read()
                 if not ret:
                     break
-                batch_frames.append(frame)
+                batch.append(frm)
                 frame_idx += 1
-
-            if not batch_frames:
+            if not batch:
                 break
 
-            embeddings = extract_face_embeddings_batch(batch_frames, mtcnn, processor, model, device)
-
-            for embedding in embeddings:
-                if embedding is not None:
-                    if prev_embedding is not None:
-                        distance = compute_cosine_distance(prev_embedding, embedding)
-                        embedding_distances.append(distance)
-                    prev_embedding = embedding
-                else:
-                    prev_embedding = None
+            embs = extract_face_embeddings_batch(batch, mtcnn, model, device)
+            for emb in embs:
+                if emb is not None:
+                    if key_emb is None:
+                        key_emb = emb  # set reference at first valid detection
+                    else:
+                        # compare current to key frame
+                        sim = np.dot(emb / np.linalg.norm(emb), key_emb / np.linalg.norm(key_emb))
+                        if sim >= THRESHOLD:
+                            same_count += 1
+                        total_count += 1
                 pbar.update(1)
-    
+
     cap.release()
+    if total_count == 0:
+        print(f"Warning: No valid comparisons in {video_path} [{start_frame}-{end_frame}]")
+        return float('nan')
+    # return percent of frames above threshold
+    return (same_count / total_count) * 100.0
 
-    if not embedding_distances:
-        print(f"Warning: No valid embeddings found in segment {start_frame}-{end_frame} of '{video_path}'.")
-        return np.nan
 
-    average_distance = np.nanmean(embedding_distances)
-    return average_distance
-
-def compute_identity_preservation_scores(video_paths: List[str], mtcnn: MTCNN, model: AutoModel, processor: AutoImageProcessor, device: torch.device, batch_size: int = BATCH_SIZE) -> Tuple[float, dict]:
-    all_distances = []
-    video_scores_dict = {}
-    
-    total_videos = len(video_paths)
-    print(f"Processing {total_videos} videos...\n")
-    
-    for video_path in tqdm(video_paths, desc="Processing Videos", unit="video"):
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            print(f"Warning: Cannot open video '{video_path}'. Skipping.")
-            video_scores_dict[video_path] = np.nan
-            continue
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-
-        actual_num_segments = NUM_SEGMENTS
-        if total_frames > FRAME_THRESHOLD:
-            actual_num_segments = NUM_SEGMENTS
-        else:
-            actual_num_segments = max(1, total_frames // MAX_FRAMES_PER_SEGMENT)
-        
-        if total_frames <= MAX_FRAMES_PER_SEGMENT:
-            segments = [(0, total_frames)]
-        else:
-            segments = []
-            for i in range(actual_num_segments):
-                start_frame = i * MAX_FRAMES_PER_SEGMENT
-                end_frame = start_frame + MAX_FRAMES_PER_SEGMENT
-                if end_frame > total_frames:
-                    end_frame = total_frames
-                segments.append((start_frame, end_frame))
-        
-        video_segment_distances = []
-        
-        for idx, (start, end) in enumerate(segments, 1):
-            distance = process_video_segment(
-                video_path,
-                start_frame=start,
-                end_frame=end,
-                mtcnn=mtcnn,
-                model=model,
-                processor=processor,
-                device=device,
-                batch_size=batch_size
-            )
-            video_segment_distances.append(distance)
-            all_distances.append(distance)
-            print(f"Video: {video_path}, Segment: {idx}, Frames: {start}-{end}, Average Distance: {distance:.4f}")
-        
-        valid_distances = [d for d in video_segment_distances if not np.isnan(d)]
-        if valid_distances:
-            mean_video_distance = np.mean(valid_distances)
-            video_scores_dict[video_path] = mean_video_distance
-        else:
-            video_scores_dict[video_path] = np.nan
-            print(f"Warning: No valid distances computed for video '{video_path}'.")
-    
-    if not all_distances:
-        print("Error: No identity preservation scores computed. Please check your videos and paths.")
-        sys.exit(1)
-    
-    overall_mean_distance = np.nanmean(all_distances)
-    return overall_mean_distance, video_scores_dict
-
-def evaluate_videos(video_paths: List[str], output_path: str, mtcnn: MTCNN, model: AutoModel, processor: AutoImageProcessor, device: torch.device, max_frames_per_segment: int = MAX_FRAMES_PER_SEGMENT, num_segments: int = NUM_SEGMENTS, batch_size: int = BATCH_SIZE):
+def evaluate_videos(video_paths: List[str], output_path: str, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, max_frames_per_segment: int = MAX_FRAMES_PER_SEGMENT, num_segments: int = NUM_SEGMENTS, batch_size: int = BATCH_SIZE):
     metrics_list = []
-    video_scores_dict = {}
 
     with open(output_path, 'w') as outfile:
-        outfile.write("Video Path,Segment,Start Frame,End Frame,Mean Cosine Distance\n")
-    
+        outfile.write("Video Path,Segment,Start,End,Score(%)\n")
         with tqdm(total=len(video_paths), desc="Evaluating Videos") as pbar_videos:
             for video_path in video_paths:
                 if not os.path.exists(video_path):
@@ -268,25 +178,11 @@ def evaluate_videos(video_paths: List[str], output_path: str, mtcnn: MTCNN, mode
                             end_frame = total_frames
                         segments.append((start_frame, end_frame))
                 
-                video_segment_distances = []
-                
                 for idx, (start, end) in enumerate(segments, 1):
-                    distance = process_video_segment(
-                        video_path,
-                        start_frame=start,
-                        end_frame=end,
-                        mtcnn=mtcnn,
-                        model=model,
-                        processor=processor,
-                        device=device,
-                        batch_size=batch_size
-                    )
-                    video_segment_distances.append(distance)
-                    metrics_list.append(distance)
-                    
-                    segment_label = f"Segment_{idx}"
-                    outfile.write(f"{video_path},{segment_label},{start},{end},{distance:.6f}\n")
-                    print(f"Video: {video_path}, Segment: {idx}, Frames: {start}-{end}, Average Distance: {distance:.4f}")
+                    score = process_video_segment(video_path, start, end, mtcnn, model, device, batch_size)
+                    outfile.write(f"{video_path},Segment_{idx},{start},{end},{score:.2f}\n")
+                    print(f"Video: {video_path}, Segment {idx}, Score: {score:.2f}%")
+                    metrics_list.append(score)
                 
                 pbar_videos.update(1)
 
@@ -294,17 +190,18 @@ def evaluate_videos(video_paths: List[str], output_path: str, mtcnn: MTCNN, mode
         print("No valid metrics to compute. Exiting.")
         return
 
-    overall_mean_distance = np.nanmean(metrics_list)
+    overall_mean_score = np.nanmean(metrics_list)
 
     with open(output_path, 'a') as outfile:
         outfile.write("\n=== Evaluation Summary ===\n")
         outfile.write(f"Number of video segments processed: {len(metrics_list)}\n")
-        outfile.write(f"Average Mean Cosine Distance: {overall_mean_distance:.6f}\n")
+        outfile.write(f"Average Score (%): {overall_mean_score:.2f}\n")
 
     print("\n=== Evaluation Results ===")
     print(f"Number of video segments processed: {len(metrics_list)}")
-    print(f"Average Mean Cosine Distance: {overall_mean_distance:.6f}")
+    print(f"Average Score (%): {overall_mean_score:.2f}")
     print(f"\nDetailed metrics have been saved to: {output_path}")
+
 
 def main():
     import argparse
@@ -319,14 +216,13 @@ def main():
     
     video_paths = read_video_paths(args.video_txt)
     
-    mtcnn, model, processor = initialize_models(device)
+    mtcnn, model = initialize_models(device)
     
     evaluate_videos(
         video_paths=video_paths,
         output_path=args.output_txt,
         mtcnn=mtcnn,
         model=model,
-        processor=processor,
         device=device,
         max_frames_per_segment=MAX_FRAMES_PER_SEGMENT,
         num_segments=NUM_SEGMENTS,
@@ -336,4 +232,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python identity_consistency.py --video_txt ../input.txt --output_txt output.txt
+# python identity_consistency.py --video_txt ../input_files/input.txt --output_txt ../output_files/output.txt

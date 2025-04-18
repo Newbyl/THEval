@@ -1,9 +1,12 @@
+import sys
+sys.path.append('../models/facexformer')
+
 import cv2
 import torch
 import numpy as np
 from facenet_pytorch import MTCNN
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize, InterpolationMode
-from facexformer.network import FaceXFormer
+from network import FaceXFormer
 from PIL import Image
 from tqdm import tqdm
 import argparse

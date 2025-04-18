@@ -1,5 +1,6 @@
+# THeval Libraries
 transformers
-huggingface-hub
+huggingface_hub
 moviepy==1.0.3
 pillow
 decord
@@ -9,3 +10,14 @@ numpy==1.25.2
 opencv-python
 torch
 torchvision
+mtcnn
+
+# AdaFace Libraries
+bcolz-zipline
+prettytable
+menpo
+mxnet
+
+# FaceXFormer Libraries
+facenet-pytorch
+-e ./models/facexformer

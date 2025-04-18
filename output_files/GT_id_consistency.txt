@@ -1,0 +1,13 @@
+Video Path,Segment,Start,End,Score(%)
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/Tgg8xmJQMyU#id4_7__1#4512_4586.mp4,Segment_1,0,75,100.00
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/w2ldt3kpkJ8#id1#700_978.mp4,Segment_1,0,278,100.00
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/vSPWHcvNmxg#id67#9958_10263.mp4,Segment_1,0,305,98.36
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/N0gr6nK6lgU#id20_5#5837_5948.mp4,Segment_1,0,111,68.18
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/EesQolfp9gQ#id0#12_162.mp4,Segment_1,0,149,79.73
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/TA16ZBA31Z0#id1479_2#14280_14354.mp4,Segment_1,0,74,32.69
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/wu8F-LbkgQA#id62_3__1#12410_12612.mp4,Segment_1,0,201,63.50
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/bGhrBHSVvig#id248_2__2#5094_5174.mp4,Segment_1,0,80,24.05
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/GLi8m_zxHPg#id140#8746_9216.mp4,Segment_1,0,470,100.00
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/zZIj3w037P8#id117_2#12470_12573.mp4,Segment_1,0,103,64.71
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/f8MtoNTiNVo#id166_14#9260_9925.mp4,Segment_1,0,500,21.24
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/O1QZVqrevAk#id8#3990_5018.mp4,Segment_1,0,500,99.80
