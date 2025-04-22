@@ -1,2 +1,5 @@
 models/*
+output_files/*
+input_files/*
+scripts/*
 __pycache__

@@ -19,7 +19,7 @@ NUM_SEGMENTS = 1
 FRAME_THRESHOLD = MAX_FRAMES_PER_SEGMENT * NUM_SEGMENTS
 
 BATCH_SIZE = 128
-THRESHOLD = 0.4  # New threshold for frame‐wise identity check (similarity)
+THRESHOLD = 0.5  # New threshold for frame‐wise identity check (similarity)
 
 
 def read_video_paths(txt_file: str) -> List[str]:
@@ -90,11 +90,24 @@ def batched(iterable, n=1):
             break
         yield batch
 
-def process_video_segment(video_path: str, start_frame: int, end_frame: int, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, batch_size: int = BATCH_SIZE) -> float:
-    if not os.path.exists(video_path):
-        print(f"Warning: Video file '{video_path}' does not exist. Skipping segment.")
+def process_video_segment(reference_folder: str, video_path: str, start_frame: int, end_frame: int, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, batch_size: int = BATCH_SIZE) -> float:
+    # load reference embedding from PNG
+    print(f"fjhauhfai : {video_path}")
+    png_name = os.path.splitext(os.path.basename(video_path))[0] + '.png'
+    ref_path = os.path.join(reference_folder, png_name)
+    if not os.path.exists(ref_path):
+        print(f"Warning: Reference PNG '{ref_path}' does not exist. Skipping segment.")
         return np.nan
-    
+    ref_img = cv2.imread(ref_path)
+    if ref_img is None:
+        print(f"Warning: Unable to read reference PNG '{ref_path}'. Skipping segment.")
+        return np.nan
+    ref_embs = extract_face_embeddings_batch([ref_img], mtcnn, model, device)
+    key_emb = ref_embs[0]
+    if key_emb is None:
+        print(f"Warning: No face detected in reference PNG '{ref_path}'. Skipping segment.")
+        return np.nan
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Warning: Unable to open video file '{video_path}'. Skipping segment.")
@@ -104,7 +117,6 @@ def process_video_segment(video_path: str, start_frame: int, end_frame: int, mtc
     frame_idx = start_frame
     same_count = 0
     total_count = 0
-    key_emb = None  # first valid embedding as reference
 
     with tqdm(total=end_frame - start_frame, leave=False) as pbar:
         while frame_idx < end_frame:
@@ -121,14 +133,10 @@ def process_video_segment(video_path: str, start_frame: int, end_frame: int, mtc
             embs = extract_face_embeddings_batch(batch, mtcnn, model, device)
             for emb in embs:
                 if emb is not None:
-                    if key_emb is None:
-                        key_emb = emb  # set reference at first valid detection
-                    else:
-                        # compare current to key frame
-                        sim = np.dot(emb / np.linalg.norm(emb), key_emb / np.linalg.norm(key_emb))
-                        if sim >= THRESHOLD:
-                            same_count += 1
-                        total_count += 1
+                    sim = np.dot(emb / np.linalg.norm(emb), key_emb / np.linalg.norm(key_emb))
+                    if sim >= THRESHOLD:
+                        same_count += 1
+                    total_count += 1
                 pbar.update(1)
 
     cap.release()
@@ -139,7 +147,7 @@ def process_video_segment(video_path: str, start_frame: int, end_frame: int, mtc
     return (same_count / total_count) * 100.0
 
 
-def evaluate_videos(video_paths: List[str], output_path: str, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, max_frames_per_segment: int = MAX_FRAMES_PER_SEGMENT, num_segments: int = NUM_SEGMENTS, batch_size: int = BATCH_SIZE):
+def evaluate_videos(reference_folder: str, video_paths: List[str], output_path: str, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, max_frames_per_segment: int = MAX_FRAMES_PER_SEGMENT, num_segments: int = NUM_SEGMENTS, batch_size: int = BATCH_SIZE):
     metrics_list = []
 
     with open(output_path, 'w') as outfile:
@@ -179,7 +187,7 @@ def evaluate_videos(video_paths: List[str], output_path: str, mtcnn: MTCNN, mode
                         segments.append((start_frame, end_frame))
                 
                 for idx, (start, end) in enumerate(segments, 1):
-                    score = process_video_segment(video_path, start, end, mtcnn, model, device, batch_size)
+                    score = process_video_segment(reference_folder, video_path, start, end, mtcnn, model, device, batch_size)
                     outfile.write(f"{video_path},Segment_{idx},{start},{end},{score:.2f}\n")
                     print(f"Video: {video_path}, Segment {idx}, Score: {score:.2f}%")
                     metrics_list.append(score)
@@ -209,6 +217,7 @@ def main():
     parser = argparse.ArgumentParser(description='Compute Identity Preservation Scores Across Multiple Videos.')
     parser.add_argument('--video_txt', type=str, required=True, help="Path to the text file containing video paths.")
     parser.add_argument('--output_txt', type=str, required=True, help="Path to the output text file to save metrics.")
+    parser.add_argument('--reference_folder', type=str, required=True, help="Path to folder containing reference PNGs.")
     args = parser.parse_args()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -219,6 +228,7 @@ def main():
     mtcnn, model = initialize_models(device)
     
     evaluate_videos(
+        reference_folder=args.reference_folder,
         video_paths=video_paths,
         output_path=args.output_txt,
         mtcnn=mtcnn,
@@ -232,4 +242,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python identity_consistency.py --video_txt ../input_files/input.txt --output_txt ../output_files/output.txt
+# python identity_consistency.py --video_txt ../input_files/input.txt --output_txt ../output_files/output.txt --reference_folder ../reference_pngs/
+# python identity_consistency.py --video_txt ../input_files/ground_truth.txt --output_txt ../output_files/test_GT_identity.txt --reference_folder /lustre/fsn1/projects/rech/vra/uuf71dx/processed/extracted_frames/

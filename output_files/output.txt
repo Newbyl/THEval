@@ -1,8 +1,8 @@
 Video Path,Segment,Start,End,Score(%)
-/lustre/fswork/projects/rech/vra/uuf71dx/talking_heads/generation_test/aniportrait/cKxRYD-XnVE#id429#18276_18410.mp4,Segment_1,0,133,90.15
-#/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/kSy7ltAidxQ#id646#13572_13879.mp4,N/A,N/A,N/A,NaN
+#/lustre/fswork/projects/rech/vra/uuf71dx/talking_heads/generation_test/aniportrait/cKxRYD-XnVE#id429#18276_18410.mp4,N/A,N/A,N/A,NaN
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/kSy7ltAidxQ#id646#13572_13879.mp4,Segment_1,0,307,91.86
 #../input_files/TA16ZBA31Z0#id1479_2#14280_14354.mp4,N/A,N/A,N/A,NaN
 
 === Evaluation Summary ===
 Number of video segments processed: 1
-Average Score (%): 90.15
+Average Score (%): 91.86

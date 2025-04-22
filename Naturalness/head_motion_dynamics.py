@@ -4,7 +4,7 @@ sys.path.append('../models/facexformer')
 import cv2
 import torch
 import numpy as np
-from facenet_pytorch import MTCNN
+from retinaface import RetinaFace
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize, InterpolationMode
 from network import FaceXFormer
 from PIL import Image
@@ -20,7 +20,6 @@ FRAME_THRESHOLD = MAX_FRAMES_PER_SEGMENT * NUM_SEGMENTS
 BATCH_SIZE = 128
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-mtcnn = MTCNN(keep_all=True, device=device)
 
 transforms_image = Compose([
     Resize((224, 224), interpolation=InterpolationMode.BICUBIC),
@@ -29,18 +28,19 @@ transforms_image = Compose([
 ])
 
 def get_headpose_batch(images, model, device):
-    boxes, _ = mtcnn.detect(images)
-
-    cropped_images = []
-    valid_indices = []
-
-    for idx, box in enumerate(boxes):
-        if box is not None and len(box) > 0:
-            x_min, y_min, x_max, y_max = box[0]
-            x_min, y_min, x_max, y_max = map(int, [x_min, y_min, x_max, y_max])
-            cropped = images[idx].crop((x_min, y_min, x_max, y_max))
+    cropped_images, valid_indices, trans = [], [], []
+    for idx, img in enumerate(images):
+        img_np = np.array(img)
+        faces = RetinaFace.detect_faces(img_np)
+        if isinstance(faces, dict):
+            area = faces[next(iter(faces))]['facial_area']
+            x1, y1, x2, y2 = area
+            w, h = img.size
+            cx, cy = ((x1 + x2) / 2), ((y1 + y2) / 2)
+            cropped = img.crop((int(x1), int(y1), int(x2), int(y2)))
             cropped_images.append(cropped)
             valid_indices.append(idx)
+            trans.append((cx, cy))
         else:
             valid_indices.append(None)
 
@@ -61,11 +61,13 @@ def get_headpose_batch(images, model, device):
 
     results = [None] * len(images)
 
-    valid_count = 0
-    for idx in valid_indices:
-        if idx is not None:
-            results[idx] = (pitch[valid_count], yaw[valid_count], roll[valid_count])
-            valid_count += 1
+    cnt = 0
+    for vidx in valid_indices:
+        if vidx is not None:
+            pitch_val, yaw_val, roll_val = (pitch[cnt], yaw[cnt], roll[cnt])
+            cx, cy = trans[cnt]
+            results[vidx] = (pitch_val, yaw_val, roll_val, cx, cy)
+            cnt += 1
 
     return results
 
@@ -76,7 +78,7 @@ def calculate_metrics(pitch, yaw, roll):
     return pitch_smoothness, yaw_smoothness, roll_smoothness
 
 
-def measure_head_motion_dynamics(pitch, yaw, roll):
+def measure_head_motion_dynamics(pitch, yaw, roll, trans_x=None, trans_y=None):
     pitch = np.array(pitch)
     yaw   = np.array(yaw)
     roll  = np.array(roll)
@@ -94,7 +96,15 @@ def measure_head_motion_dynamics(pitch, yaw, roll):
     var_droll  = np.var(droll)  if len(droll)  > 1 else 0.0
     avg_deriv_var = (var_dpitch + var_dyaw + var_droll) / 3.0
 
-    complexity = np.sqrt(avg_std * avg_deriv_var)
+    if trans_x is not None and trans_y is not None and len(trans_x) > 1:
+        var_tx = np.var(trans_x)
+        var_ty = np.var(trans_y)
+        avg_trans_var = (var_tx + var_ty) / 2.0
+    else:
+        avg_trans_var = 0.0
+
+    complexity = np.sqrt((avg_std * avg_deriv_var) + avg_trans_var)
+    print(avg_trans_var)
 
     return complexity
 
@@ -109,6 +119,7 @@ def analyze_video(video_path, model, device, start_frame=0, end_frame=None):
         end_frame = total_frames
 
     pitch_vals, yaw_vals, roll_vals = [], [], []
+    trans_x_vals, trans_y_vals = [], []
 
     frames_to_process = end_frame - start_frame
 
@@ -134,10 +145,12 @@ def analyze_video(video_path, model, device, start_frame=0, end_frame=None):
 
                 for hp in headposes:
                     if hp is not None:
-                        pitch, yaw, roll = hp
+                        pitch, yaw, roll, cx, cy = hp
                         pitch_vals.append(pitch)
                         yaw_vals.append(yaw)
                         roll_vals.append(roll)
+                        trans_x_vals.append(cx)
+                        trans_y_vals.append(cy)
                 pbar.update(len(batch_images))
 
                 batch_images = []
@@ -149,7 +162,7 @@ def analyze_video(video_path, model, device, start_frame=0, end_frame=None):
         return None
 
     pitch_smoothness, yaw_smoothness, roll_smoothness = calculate_metrics(pitch_vals, yaw_vals, roll_vals)
-    head_motion_dynamics = measure_head_motion_dynamics(pitch_vals, yaw_vals, roll_vals)
+    head_motion_dynamics = measure_head_motion_dynamics(pitch_vals, yaw_vals, roll_vals, trans_x_vals, trans_y_vals)
 
     return {
         "pitch_smoothness": pitch_smoothness,
@@ -242,7 +255,7 @@ def read_video_paths(txt_file):
 def main():
     parser = argparse.ArgumentParser(description="Evaluate videos for head motion dynamics.")
     parser.add_argument('--video_txt', type=str, required=True, help="Path to the text file containing video paths.")
-    parser.add_argument('--model_path', type=str, required=True, help="Path to the FaceXFormer model checkpoint.")
+    parser.add_argument('--model_path', type=str, default="../models/facexformer/ckpts/model.pt", help="Path to the FaceXFormer model checkpoint.")
     parser.add_argument('--output_txt', type=str, required=True, help="Path to the output text file to save metrics.")
     parser.add_argument('--device', type=str, default="cuda:0", help="Device to run the model on. e.g., 'cuda:0' or 'cpu'.")
     args = parser.parse_args()
@@ -258,4 +271,4 @@ if __name__ == "__main__":
     main()
 
 
-# python head_motion_dynamics.py --video_txt ../input.txt --model_path ../models/facexformer/ckpts/model.pt --output_txt output.txt --device cuda:0
+# python head_motion_dynamics.py --video_txt ../input_files/input.txt --output_txt ../output_files/hm_output.txt
