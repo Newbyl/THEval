@@ -32,6 +32,8 @@ FACEMESH_LIPS = frozenset([
     (415, 308)
 ])
 
+REF_LANDMARKS = (33, 263)
+
 def extract_unique_indices(connection_set: frozenset) -> List[int]:
     idxs = set()
     for (i, j) in connection_set:
@@ -41,18 +43,34 @@ def extract_unique_indices(connection_set: frozenset) -> List[int]:
 
 lip_indices = extract_unique_indices(FACEMESH_LIPS)
 
-def get_landmark_xy(frame_shape: Tuple[int, int, int], face_landmarks, idx: int) -> np.ndarray:
-    h, w, _ = (256, 256, 256)
+def get_landmark_xy(
+    frame_shape: Tuple[int, int, int],
+    face_landmarks,
+    idx: int
+) -> np.ndarray:
+    h, w, _ = frame_shape
     x_norm = face_landmarks.landmark[idx].x
     y_norm = face_landmarks.landmark[idx].y
     return np.array([x_norm * w, y_norm * h])
 
-def compute_lip_shape_vector(frame_shape: Tuple[int, int, int], face_landmarks, lip_idxs: List[int]) -> np.ndarray:
+def compute_lip_shape_vector(
+    frame_shape: Tuple[int, int, int],
+    face_landmarks,
+    lip_idxs: List[int]
+) -> np.ndarray:
+    # get lip points in pixel space
     points = [get_landmark_xy(frame_shape, face_landmarks, i) for i in lip_idxs]
 
+    # get the two reference points and compute their distance
+    ref_pts = [get_landmark_xy(frame_shape, face_landmarks, i) for i in REF_LANDMARKS]
+    ref_dist = np.linalg.norm(ref_pts[0] - ref_pts[1])
+    if ref_dist <= 0:
+        ref_dist = 1.0
+
+    # build pairwise distance vector, then normalize
     dist_list = []
     for (i, j) in combinations(range(len(points)), 2):
-        dist = np.linalg.norm(points[i] - points[j])
+        dist = np.linalg.norm(points[i] - points[j]) / ref_dist
         dist_list.append(dist)
 
     return np.array(dist_list)
@@ -61,7 +79,7 @@ def compute_mouth_diversity(
     video_path: str,
     start_frame: int,
     end_frame: int,
-    method: str = 'std_over_time'
+    method: str = 'var_over_time'
 ) -> Optional[float]:
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -79,7 +97,7 @@ def compute_mouth_diversity(
             break
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb_frame = cv2.resize(rgb_frame, (256, 256))
+        #rgb_frame = cv2.resize(rgb_frame, (256, 256))
         results = mp_face_mesh.process(rgb_frame)
 
         if results.multi_face_landmarks:
@@ -103,12 +121,12 @@ def compute_mouth_diversity(
 
     shape_vectors_np = np.array(valid_shape_vectors)
 
-    if method == 'std_over_time':
-        std_per_dimension = np.std(shape_vectors_np, axis=0)
-        diversity_std = float(np.mean(std_per_dimension))
+    if method == 'var_over_time':
+        var_per_dimension = np.var(shape_vectors_np, axis=0)
+        diversity_std = float(np.mean(var_per_dimension))
         return diversity_std
     else:
-        raise ValueError("Unknown method. Use 'std_over_time'.")
+        raise ValueError("Unknown method. Use 'var_over_time'.")
 
 def read_video_paths(txt_file: str) -> List[str]:
     if not os.path.exists(txt_file):
@@ -134,7 +152,7 @@ def evaluate_videos(
     video_scores_dict_std = {}
 
     with open(output_path, 'w') as outfile:
-        outfile.write("Video Path,Segment,Start Frame,End Frame,Std_Over_Time\n")
+        outfile.write("Video Path,Segment,Start Frame,End Frame,Var_Over_Time\n")
 
         for video_path in tqdm(video_paths, desc="Evaluating Videos", unit="video"):
             if not os.path.exists(video_path):
@@ -174,7 +192,7 @@ def evaluate_videos(
                     video_path,
                     start_frame=start,
                     end_frame=end,
-                    method='std_over_time'
+                    method='var_over_time'
                 )
                 video_segment_std.append(std_metric)
                 metrics_std.append(std_metric)
