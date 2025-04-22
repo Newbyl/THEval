@@ -1,3 +1,3 @@
-#/lustre/fswork/projects/rech/vra/uuf71dx/talking_heads/generation_test/aniportrait/cKxRYD-XnVE#id429#18276_18410.mp4
-/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/kSy7ltAidxQ#id646#13572_13879.mp4
+/lustre/fswork/projects/rech/vra/uuf71dx/talking_heads/generation_test/aniportrait/cKxRYD-XnVE#id429#18276_18410.mp4
+/lustre/fsn1/projects/rech/vra/uuf71dx/processed/used_videos/cKxRYD-XnVE#id429#18276_18410.mp4
 #../input_files/TA16ZBA31Z0#id1479_2#14280_14354.mp4
