@@ -90,24 +90,50 @@ def batched(iterable, n=1):
             break
         yield batch
 
-def process_video_segment(reference_folder: str, video_path: str, start_frame: int, end_frame: int, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, batch_size: int = BATCH_SIZE) -> float:
-    # load reference embedding from PNG
-    print(f"fjhauhfai : {video_path}")
-    png_name = os.path.splitext(os.path.basename(video_path))[0] + '.png'
-    ref_path = os.path.join(reference_folder, png_name)
-    if not os.path.exists(ref_path):
-        print(f"Warning: Reference PNG '{ref_path}' does not exist. Skipping segment.")
-        return np.nan
-    ref_img = cv2.imread(ref_path)
-    if ref_img is None:
-        print(f"Warning: Unable to read reference PNG '{ref_path}'. Skipping segment.")
-        return np.nan
-    ref_embs = extract_face_embeddings_batch([ref_img], mtcnn, model, device)
-    key_emb = ref_embs[0]
-    if key_emb is None:
-        print(f"Warning: No face detected in reference PNG '{ref_path}'. Skipping segment.")
-        return np.nan
-
+def process_video_segment(reference_folder: Optional[str], video_path: str, start_frame: int, end_frame: int, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, batch_size: int = BATCH_SIZE) -> float:
+    # Get reference embedding
+    key_emb = None
+    
+    # Case 1: Use reference folder if provided
+    if reference_folder is not None:
+        png_name = os.path.splitext(os.path.basename(video_path))[0] + '.png'
+        ref_path = os.path.join(reference_folder, png_name)
+        if not os.path.exists(ref_path):
+            print(f"Warning: Reference PNG '{ref_path}' does not exist. Skipping segment.")
+            return np.nan
+        ref_img = cv2.imread(ref_path)
+        if ref_img is None:
+            print(f"Warning: Unable to read reference PNG '{ref_path}'. Skipping segment.")
+            return np.nan
+        ref_embs = extract_face_embeddings_batch([ref_img], mtcnn, model, device)
+        key_emb = ref_embs[0]
+        if key_emb is None:
+            print(f"Warning: No face detected in reference PNG '{ref_path}'. Skipping segment.")
+            return np.nan
+    # Case 2: Use first frame of video
+    else:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"Warning: Unable to open video file '{video_path}'. Skipping segment.")
+            return np.nan
+            
+        # Read the first frame
+        ret, first_frame = cap.read()
+        if not ret:
+            print(f"Warning: Unable to read first frame of '{video_path}'. Skipping segment.")
+            cap.release()
+            return np.nan
+            
+        ref_embs = extract_face_embeddings_batch([first_frame], mtcnn, model, device)
+        key_emb = ref_embs[0]
+        if key_emb is None:
+            print(f"Warning: No face detected in first frame of '{video_path}'. Skipping segment.")
+            cap.release()
+            return np.nan
+        
+        cap.release()
+        
+    # Now process the video segment
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Warning: Unable to open video file '{video_path}'. Skipping segment.")
@@ -147,7 +173,7 @@ def process_video_segment(reference_folder: str, video_path: str, start_frame: i
     return (same_count / total_count) * 100.0
 
 
-def evaluate_videos(reference_folder: str, video_paths: List[str], output_path: str, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, max_frames_per_segment: int = MAX_FRAMES_PER_SEGMENT, num_segments: int = NUM_SEGMENTS, batch_size: int = BATCH_SIZE):
+def evaluate_videos(reference_folder: Optional[str], video_paths: List[str], output_path: str, mtcnn: MTCNN, model: torch.nn.Module, device: torch.device, max_frames_per_segment: int = MAX_FRAMES_PER_SEGMENT, num_segments: int = NUM_SEGMENTS, batch_size: int = BATCH_SIZE):
     metrics_list = []
 
     with open(output_path, 'w') as outfile:
@@ -217,7 +243,8 @@ def main():
     parser = argparse.ArgumentParser(description='Compute Identity Preservation Scores Across Multiple Videos.')
     parser.add_argument('--video_txt', type=str, required=True, help="Path to the text file containing video paths.")
     parser.add_argument('--output_txt', type=str, required=True, help="Path to the output text file to save metrics.")
-    parser.add_argument('--reference_folder', type=str, required=True, help="Path to folder containing reference PNGs.")
+    parser.add_argument('--reference_folder', type=str, required=False, default=None, 
+                        help="Path to folder containing reference PNGs. If not provided, first frame of each video will be used as reference.")
     args = parser.parse_args()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

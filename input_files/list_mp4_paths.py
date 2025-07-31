@@ -8,16 +8,17 @@ def find_mp4_files(folder):
                 yield os.path.abspath(os.path.join(root, fname))
 
 def main():
-    parser = argparse.ArgumentParser(description="List all .mp4 files in a folder")
-    parser.add_argument('folder', help='Path to the folder to search')
+    parser = argparse.ArgumentParser(description="List all .mp4 files in given folder(s) and their subfolders")
+    parser.add_argument('folders', nargs='+', help='Path(s) to the folder(s) to search')
     parser.add_argument('-o', '--output',
                         help='Path to output txt file',
                         default='mp4_paths.txt')
     args = parser.parse_args()
 
     with open(args.output, 'w') as out_f:
-        for path in find_mp4_files(args.folder):
-            out_f.write(path + '\n')
+        for folder in args.folders:
+            for path in find_mp4_files(folder):
+                out_f.write(path + '\n')
 
     print(f"All MP4 paths written to {args.output}")
 

@@ -85,7 +85,7 @@ def read_video_paths(txt_file):
     with open(txt_file, 'r') as f:
         return [line.strip() for line in f if line.strip()]
 
-def evaluate_videos(video_paths, output_path):
+def evaluate_videos(video_paths, output_path, audio_folder=None):
     metrics = []
     video_scores = {}
 
@@ -98,7 +98,17 @@ def evaluate_videos(video_paths, output_path):
                 total_frames = len(vr)
                 del vr
                 
-                y, sr = extract_audio(video_path)
+                # --- load audio either from audio_folder or by extraction ---
+                if audio_folder:
+                    base = os.path.splitext(os.path.basename(video_path))[0]
+                    wav_path = os.path.join(audio_folder, base + '.wav')
+                    if os.path.exists(wav_path):
+                        y, sr = librosa.load(wav_path, sr=None)
+                    else:
+                        print(f"WAV file not found ({wav_path}), extracting from video")
+                        y, sr = extract_audio(video_path)
+                else:
+                    y, sr = extract_audio(video_path)
                 
                 segment_scores = []
                 for seg_num in range(NUM_SEGMENTS):
@@ -140,6 +150,7 @@ def main():
     parser = argparse.ArgumentParser(description='Calculate mouth openness-audio volume diff')
     parser.add_argument('--video_txt', required=True, help='Text file containing video paths')
     parser.add_argument('--output_txt', required=True, help='Output text file path')
+    parser.add_argument('--audio_folder', help='Folder with pre-extracted .wav files', default=None)
     args = parser.parse_args()
 
     try:
@@ -148,7 +159,7 @@ def main():
         print(f"Error: {e}")
         return
 
-    evaluate_videos(video_paths, args.output_txt)
+    evaluate_videos(video_paths, args.output_txt, args.audio_folder)
     print(f"\nResults saved to {args.output_txt}")
 
 if __name__ == "__main__":

@@ -196,10 +196,10 @@ def evaluate_videos(
         else:
             overall_mean_std = np.nan
 
-        with open(output_path, 'a') as outfile:
-            outfile.write("\n=== Evaluation Summary ===\n")
-            outfile.write(f"Number of video segments processed: {len(metrics_std)}\n")
-            outfile.write(f"Average STD Over Time: {overall_mean_std:.6f}\n")
+    with open(output_path, 'a') as outfile:
+        outfile.write("\n=== Evaluation Summary ===\n")
+        outfile.write(f"Number of video segments processed: {len(metrics_std)}\n")
+        outfile.write(f"Average STD Over Time: {overall_mean_std:.6f}\n")
 
 def main():
     parser = argparse.ArgumentParser(description='Compute Mouth Movement Diversity Across Multiple Videos.')

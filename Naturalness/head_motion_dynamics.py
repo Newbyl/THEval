@@ -191,38 +191,45 @@ def evaluate_videos(video_paths, model_path, output_path, device="cuda:0"):
 
         with tqdm(total=len(video_paths), desc="Evaluating Videos") as pbar_videos:
             for video_idx, video_path in enumerate(video_paths, 1):
-                cap = cv2.VideoCapture(video_path)
-                if not cap.isOpened():
-                    print(f"Error: Cannot open video {video_path}")
-                    pbar_videos.update(1)
-                    continue
-                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                cap.release()
+                try:
+                    cap = cv2.VideoCapture(video_path)
+                    if not cap.isOpened():
+                        print(f"Error: Cannot open video {video_path}")
+                        pbar_videos.update(1)
+                        continue
 
-                if frame_count > FRAME_THRESHOLD:
-                    for i in range(NUM_SEGMENTS):
-                        start_frame = i * MAX_FRAMES_PER_SEGMENT
-                        end_frame = start_frame + MAX_FRAMES_PER_SEGMENT
-                        if end_frame > frame_count:
-                            end_frame = frame_count
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    cap.release()
 
-                        metrics = analyze_video(video_path, model, device, start_frame, end_frame)
+                    if frame_count > FRAME_THRESHOLD:
+                        for i in range(NUM_SEGMENTS):
+                            start_frame = i * MAX_FRAMES_PER_SEGMENT
+                            end_frame = start_frame + MAX_FRAMES_PER_SEGMENT
+                            if end_frame > frame_count:
+                                end_frame = frame_count
+
+                            metrics = analyze_video(video_path, model, device, start_frame, end_frame)
+                            if metrics is not None:
+                                metrics_list.append(metrics)
+                                segment_label = f"Segment_{i+1}"
+                                outfile.write(f"{video_path},{segment_label},{metrics['start_frame']},{metrics['end_frame']},"
+                                              f"{metrics['pitch_smoothness']:.6f},{metrics['yaw_smoothness']:.6f},"
+                                              f"{metrics['roll_smoothness']:.6f},"
+                                              f"{metrics['head_motion_dynamics']:.6f}\n")
+                    else:
+                        metrics = analyze_video(video_path, model, device)
                         if metrics is not None:
                             metrics_list.append(metrics)
-                            segment_label = f"Segment_{i+1}"
-                            outfile.write(f"{video_path},{segment_label},{metrics['start_frame']},{metrics['end_frame']},"
+                            segment_label = "Full_Video"
+                            outfile.write(f"{video_path},{segment_label},0,{frame_count},"
                                           f"{metrics['pitch_smoothness']:.6f},{metrics['yaw_smoothness']:.6f},"
                                           f"{metrics['roll_smoothness']:.6f},"
                                           f"{metrics['head_motion_dynamics']:.6f}\n")
-                else:
-                    metrics = analyze_video(video_path, model, device)
-                    if metrics is not None:
-                        metrics_list.append(metrics)
-                        segment_label = "Full_Video"
-                        outfile.write(f"{video_path},{segment_label},0,{frame_count},"
-                                      f"{metrics['pitch_smoothness']:.6f},{metrics['yaw_smoothness']:.6f},"
-                                      f"{metrics['roll_smoothness']:.6f},"
-                                      f"{metrics['head_motion_dynamics']:.6f}\n")
+
+                except Exception as e:
+                    print(f"Error processing video {video_path}: {e}")
+                    pbar_videos.update(1)
+                    continue
 
                 pbar_videos.update(1)
 
@@ -234,10 +241,10 @@ def evaluate_videos(video_paths, model_path, output_path, device="cuda:0"):
 
         mean_head_motion_dynamics = np.mean(head_motion_dynamics_values) if head_motion_dynamics_values else 0.0
 
-        with open(output_path, 'a') as outfile:
-            outfile.write("\n=== Evaluation Summary ===\n")
-            outfile.write(f"Number of video segments processed: {len(metrics_list)}\n")
-            outfile.write(f"Mean head motion dynamics: {mean_head_motion_dynamics:.6f}\n")
+    with open(output_path, 'a') as outfile:
+        outfile.write("\n=== Evaluation Summary ===\n")
+        outfile.write(f"Number of video segments processed: {len(metrics_list)}\n")
+        outfile.write(f"Mean head motion dynamics: {mean_head_motion_dynamics:.6f}\n")
 
     print("\n=== Evaluation Results ===")
     print(f"Number of video segments processed: {len(metrics_list)}")
@@ -271,4 +278,4 @@ if __name__ == "__main__":
     main()
 
 
-# python head_motion_dynamics.py --video_txt ../input_files/input.txt --output_txt ../output_files/hm_output.txt
+# python head_motion_dynamics.py --video_txt ../input_files/input.txt --output_txt ../hm_output.txt

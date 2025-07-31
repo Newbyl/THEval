@@ -9,7 +9,7 @@ from pydub import AudioSegment
 from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 
 MAX_FRAMES_PER_SEGMENT = 500
-MIN_SILENCE_DURATION = 750
+MIN_SILENCE_DURATION = 300
 
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
@@ -29,59 +29,52 @@ def extract_audio(video_path):
         print(f"Audio extraction failed for {video_path}: {e}")
         return None
 
-def detect_silence_frames(audio_segment, frame_rate, total_frames):
-    if audio_segment is None:
+def detect_silence_frames(audio_input, frame_rate, total_frames):
+    if audio_input is None:
         return set()
+    # decide if we need to export a temp WAV or reuse existing file
+    if isinstance(audio_input, str):
+        wav_path = audio_input
+        remove_temp = False
+    else:
+        temp_wav = "temp_audio.wav"
+        audio_input.export(temp_wav, format="wav")
+        wav_path = temp_wav
+        remove_temp = True
 
-    # Convert audio segment to WAV format and save temporarily
-    temp_wav = "temp_audio.wav"
-    audio_segment.export(temp_wav, format="wav")
-    
-    # Read audio using Silero-VAD
-    wav = read_audio(temp_wav)
-    
-    # Get speech timestamps
-    speech_timestamps = get_speech_timestamps(
-        wav,
-        vad_model,
-        return_seconds=True
-    )
-    
-    # Clean up temporary file
-    os.remove(temp_wav)
-    
+    wav = read_audio(wav_path)
+    speech_timestamps = get_speech_timestamps(wav, vad_model, return_seconds=True)
+
+    if remove_temp:
+        os.remove(wav_path)
+
     # Convert speech timestamps to silence frames
     silence_frames = set(range(total_frames))  # Start with all frames as silent
     
     # Remove frames that contain speech
-    for speech_segment in speech_timestamps:
-        start_frame = int(speech_segment['start'] * frame_rate)
-        end_frame = int(speech_segment['end'] * frame_rate)
-        for frame in range(start_frame, end_frame + 1):
-            if frame in silence_frames:
-                silence_frames.remove(frame)
-    
+    for seg in speech_timestamps:
+        start_frame = int(seg['start'] * frame_rate)
+        end_frame = int(seg['end']   * frame_rate)
+        for f in range(start_frame, end_frame+1):
+            silence_frames.discard(f)
+
     # Filter out very short silence periods
     filtered_silence_frames = set()
-    current_silence_start = None
-    current_silence_count = 0
-    
-    for frame in sorted(silence_frames):
-        if current_silence_start is None:
-            current_silence_start = frame
-            current_silence_count = 1
-        elif frame == current_silence_start + current_silence_count:
-            current_silence_count += 1
+    current_start = None
+    count = 0
+    for f in sorted(silence_frames):
+        if current_start is None:
+            current_start, count = f, 1
+        elif f == current_start + count:
+            count += 1
         else:
             # Check if the silence period is long enough
-            if current_silence_count >= (MIN_SILENCE_DURATION / 1000 * frame_rate):
-                filtered_silence_frames.update(range(current_silence_start, current_silence_start + current_silence_count))
-            current_silence_start = frame
-            current_silence_count = 1
-    
+            if count >= (MIN_SILENCE_DURATION/1000 * frame_rate):
+                filtered_silence_frames.update(range(current_start, current_start+count))
+            current_start, count = f, 1
     # Check the last silence period
-    if current_silence_count >= (MIN_SILENCE_DURATION / 1000 * frame_rate):
-        filtered_silence_frames.update(range(current_silence_start, current_silence_start + current_silence_count))
+    if count >= (MIN_SILENCE_DURATION/1000 * frame_rate):
+        filtered_silence_frames.update(range(current_start, current_start+count))
     
     return filtered_silence_frames
 
@@ -156,6 +149,7 @@ def main():
     parser = argparse.ArgumentParser(description='Silent Mouth Movement Analysis')
     parser.add_argument('--video_txt', required=True, help='Input video list')
     parser.add_argument('--output_txt', required=True, help='Output CSV file')
+    parser.add_argument('--audio_folder', help='Folder with pre-extracted .wav files', default=None)
     
     args = parser.parse_args()
 
@@ -168,42 +162,56 @@ def main():
 
         for video_path in tqdm([l.strip() for l in f if l.strip()], desc="Processing videos"):
             video_count += 1
-            if not os.path.exists(video_path):
-                writer.writerow([video_path, 'File not found', 0])
+            try:
+                if not os.path.exists(video_path):
+                    writer.writerow([video_path, 'File not found', 0])
+                    continue
+
+                # --- load audio either from audio_folder or by extraction ---
+                if args.audio_folder:
+                    base = os.path.splitext(os.path.basename(video_path))[0]
+                    wav_file = os.path.join(args.audio_folder, base + '.wav')
+                    if not os.path.exists(wav_file):
+                        writer.writerow([video_path, 'WAV not found', 0])
+                        continue
+                    audio = wav_file
+                else:
+                    audio = extract_audio(video_path)
+
+                if audio is None:
+                    writer.writerow([video_path, 'Audio error', 0])
+                    continue
+
+                cap = cv2.VideoCapture(video_path)
+                frame_rate = cap.get(cv2.CAP_PROP_FPS)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.release()
+
+                silence_frames = detect_silence_frames(
+                    audio_input=audio,
+                    frame_rate=frame_rate,
+                    total_frames=total_frames
+                )
+
+                if not silence_frames:
+                    writer.writerow([video_path, 'No silence', 0])
+                    continue
+
+                variance, sil_count = process_video(video_path, silence_frames)
+
+                writer.writerow([
+                    video_path,
+                    f"{variance:.4f}" if not np.isnan(variance) else "NaN",
+                    sil_count
+                ])
+
+                if not np.isnan(variance):
+                    variances.append(variance)
+
+            except Exception as e:
+                print(f"Skipping {video_path} due to error: {e}")
+                writer.writerow([video_path, 'Error during processing', 0])
                 continue
-
-            audio = extract_audio(video_path)
-            if audio is None:
-                writer.writerow([video_path, 'Audio error', 0])
-                continue
-
-            cap = cv2.VideoCapture(video_path)
-            frame_rate = cap.get(cv2.CAP_PROP_FPS)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            cap.release()
-
-            silence_frames = detect_silence_frames(
-                audio_segment=audio,
-                frame_rate=frame_rate,
-                total_frames=total_frames
-            )
-
-            if not silence_frames:
-                writer.writerow([video_path, 'No silence', 0])
-                continue
-
-            variance, sil_count = process_video(video_path, silence_frames)
-            
-            writer.writerow([
-                video_path,
-                f"{variance:.4f}" if not np.isnan(variance) else "NaN",
-                sil_count
-            ])
-            
-            if not np.isnan(variance):
-                variances.append(variance)
-                
-            #print(f"average var : {np.nanmean(variances)}")
 
         avg_variance = np.mean(variances) if variances else np.nan
         
