@@ -96,7 +96,7 @@ For the <strong>head motion dynamics</strong> metric follow the instruction in `
 
 ## Usage
 
-To use any of the 10 metrics you only have to go in the folder where is located the metric that you want results from, then use the following command (except head motion dynamics, the pattern remains the same) : 
+To use any of the 9 metrics you only have to go in the folder where is located the metric that you want results from, then use the following command (except head motion dynamics, the pattern remains the same) : 
 
 ```
 python metric_name.py --video_txt ../input.txt --output_txt output.txt
