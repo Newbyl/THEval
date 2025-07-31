@@ -5,3 +5,4 @@ scripts/*
 user_study_videos/*
 __pycache__
 .DS_Store
+._*
