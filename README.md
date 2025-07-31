@@ -16,7 +16,6 @@ This repository contains the official implementation  for the paper "THEval - Ev
 - [Usage](#usage)
 - [Citation and Acknowledgement](#citation_and_acknowledgement)
 
-
 ## 🔥 Updates
 - [07/2025] **Code released** 
 
@@ -91,8 +90,6 @@ conda create -n theval python=3.9 -y
 conda activate theval
 pip install -r requirements.txt
 ```
-
-For the <strong>head motion dynamics</strong> metric follow the instruction in `models/facexformer/README.md`.
 
 ## Usage
 
