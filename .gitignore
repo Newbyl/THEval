@@ -1,4 +1,5 @@
-models/*
+models/AdaFace
+models/facexformer
 output_files/*
 input_files/*
 scripts/*
