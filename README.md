@@ -188,6 +188,6 @@ dataset and use those GT values instead of `examples/gt_metrics.csv`.
 
 ## Acknowledgements
 
-THEval builds on public models and libraries including Q-Align/OneAlign, TOPIQ,
+THEval builds on public models and libraries including pyiqa,
 MediaPipe, Silero VAD, and FaceXFormer. Please follow their licenses and
 citation requirements when using the corresponding metrics.
