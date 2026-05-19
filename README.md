@@ -84,13 +84,7 @@ This installs the model files expected by the metric scripts:
 
 ```text
 models/facexformer/ckpts/model.pt                  # Head Motion Dynamics
-models/AdaFace/pretrained/adaface_ir50_ms1mv2.ckpt # Face recognition / identity diagnostic
 ```
-
-If you only want the eight official THEval metrics, FaceXFormer is the required
-external model. AdaFace is used by `Naturalness/identity_consistency.py`, which
-is kept as an auxiliary face-recognition diagnostic and is not part of the final
-paper score.
 
 ## Prepare Videos
 
