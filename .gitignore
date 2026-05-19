@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+build/
+dist/
+
+# OS/editor files
+.DS_Store
+._*
+
+# Local environments
+.env
+.venv/
+venv/
+env/
+
+# Runtime outputs and local datasets
+input_files/*
+!input_files/.gitkeep
+output_files/*
+!output_files/.gitkeep
+user_study_videos/
+methods/
+float/
+visualization/
+utils_paper/
+old_metric/
+scripts/
+Naturalness/identity_consistency.py
+*.slurm
+*.pdf
+
+
+# Large media/data artifacts
+*.mp4
+*.mP4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.wav
+*.zip
+*.pkl
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.log
+*.out
+*.err
+
+# External model repositories and weights.
+# Keep models/.gitkeep so users know where optional checkpoints should go.
+models/*
+!models/.gitkeep

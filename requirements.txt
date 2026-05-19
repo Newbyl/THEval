@@ -1,0 +1,46 @@
+# Runtime dependencies for THEval metric scripts.
+# These are pinned direct dependencies from the environments used for the
+# paper release. Full reference environment freezes are documented in
+# docs/reference_environments.md.
+
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.15.2
+scikit-image==0.25.2
+scikit-learn==1.6.1
+
+opencv-python==4.11.0.86
+opencv-contrib-python==4.11.0.86
+pillow==11.2.1
+tqdm==4.67.1
+decord==0.6.0
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
+
+transformers==4.37.2
+accelerate==1.6.0
+huggingface-hub==0.30.2
+tokenizers==0.15.2
+safetensors==0.5.3
+timm==1.0.15
+einops==0.8.1
+openai-clip==1.0.1
+ftfy==6.3.1
+
+mediapipe==0.10.21
+pyiqa==0.1.13
+facexlib==0.3.0
+retina-face==0.0.17
+protobuf==4.25.7
+
+moviepy==1.0.3
+librosa==0.11.0
+soundfile==0.13.1
+pydub==0.25.1
+silero-vad==5.1.2
+
+facenet-pytorch==2.5.3
+gdown==5.2.0
+
+tensorflow[and-cuda]==2.17.0
+tf_keras==2.17.0

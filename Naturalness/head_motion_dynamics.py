@@ -1,0 +1,263 @@
+import cv2
+import torch
+import numpy as np
+from retinaface import RetinaFace
+from torchvision.transforms import Compose, Resize, ToTensor, Normalize, InterpolationMode
+from PIL import Image
+from tqdm import tqdm
+import argparse
+import os
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+FACEXFORMER_DIR = REPO_ROOT / "models" / "facexformer"
+DEFAULT_MODEL_PATH = FACEXFORMER_DIR / "ckpts" / "model.pt"
+
+if str(FACEXFORMER_DIR) not in sys.path:
+    sys.path.insert(0, str(FACEXFORMER_DIR))
+
+try:
+    from network import FaceXFormer
+except ImportError:
+    FaceXFormer = None
+
+
+BATCH_SIZE = 128
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+transforms_image = Compose([
+    Resize((224, 224), interpolation=InterpolationMode.BICUBIC),
+    ToTensor(),
+    Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+def get_headpose_batch(images, model, device):
+    cropped_images, valid_indices, trans = [], [], []
+    for idx, img in enumerate(images):
+        img_np = np.array(img)
+        faces = RetinaFace.detect_faces(img_np)
+        if isinstance(faces, dict):
+            area = faces[next(iter(faces))]['facial_area']
+            x1, y1, x2, y2 = area
+            w, h = img.size
+            cx, cy = ((x1 + x2) / 2), ((y1 + y2) / 2)
+            cropped = img.crop((int(x1), int(y1), int(x2), int(y2)))
+            cropped_images.append(cropped)
+            valid_indices.append(idx)
+            trans.append((cx, cy))
+        else:
+            valid_indices.append(None)
+
+    if not cropped_images:
+        return [None] * len(images)
+
+    image_tensors = torch.stack([transforms_image(img) for img in cropped_images]).to(device)
+
+    task = torch.tensor([2] * len(cropped_images)).to(device)
+    label = {"headpose": torch.zeros([len(cropped_images), 3]).to(device)}
+
+    with torch.no_grad():
+        _, headpose_output, _, _, _, _, _, _ = model(image_tensors, label, task)
+
+    pitch = (headpose_output[:, 0].cpu().numpy()) * 180 / np.pi
+    yaw = (headpose_output[:, 1].cpu().numpy()) * 180 / np.pi
+    roll = (headpose_output[:, 2].cpu().numpy()) * 180 / np.pi
+
+    results = [None] * len(images)
+
+    cnt = 0
+    for vidx in valid_indices:
+        if vidx is not None:
+            pitch_val, yaw_val, roll_val = (pitch[cnt], yaw[cnt], roll[cnt])
+            cx, cy = trans[cnt]
+            results[vidx] = (pitch_val, yaw_val, roll_val, cx, cy)
+            cnt += 1
+
+    return results
+
+def calculate_metrics(pitch, yaw, roll):
+    pitch_smoothness = np.var(np.diff(pitch)) if len(pitch) > 1 else 0.0
+    yaw_smoothness = np.var(np.diff(yaw)) if len(yaw) > 1 else 0.0
+    roll_smoothness = np.var(np.diff(roll)) if len(roll) > 1 else 0.0
+    return pitch_smoothness, yaw_smoothness, roll_smoothness
+
+
+def measure_head_motion_dynamics(pitch, yaw, roll, trans_x=None, trans_y=None):
+    pitch = np.array(pitch)
+    yaw   = np.array(yaw)
+    roll  = np.array(roll)
+
+    std_pitch = np.std(pitch)
+    std_yaw   = np.std(yaw)
+    std_roll  = np.std(roll)
+    avg_std = (std_pitch + std_yaw + std_roll) / 3.0
+
+    dpitch = np.diff(pitch)
+    dyaw   = np.diff(yaw)
+    droll  = np.diff(roll)
+    var_dpitch = np.var(dpitch) if len(dpitch) > 1 else 0.0
+    var_dyaw   = np.var(dyaw)   if len(dyaw)   > 1 else 0.0
+    var_droll  = np.var(droll)  if len(droll)  > 1 else 0.0
+    avg_deriv_var = (var_dpitch + var_dyaw + var_droll) / 3.0
+
+    if trans_x is not None and trans_y is not None and len(trans_x) > 1:
+        var_tx = np.var(trans_x)
+        var_ty = np.var(trans_y)
+        avg_trans_var = (var_tx + var_ty) / 2.0
+    else:
+        avg_trans_var = 0.0
+
+    complexity = np.sqrt((avg_std * avg_deriv_var) + avg_trans_var) 
+
+    return complexity
+
+def analyze_video(video_path, model, device):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Cannot open video {video_path}")
+        return None
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    pitch_vals, yaw_vals, roll_vals = [], [], []
+    trans_x_vals, trans_y_vals = [], []
+
+    with tqdm(total=total_frames, desc=f"Processing {os.path.basename(video_path)}", leave=False) as pbar:
+        current_frame = 0
+        batch_images = []
+
+        while current_frame < total_frames:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(frame_rgb)
+
+            batch_images.append(pil_image)
+            current_frame += 1
+
+            if len(batch_images) == BATCH_SIZE or current_frame == total_frames:
+                headposes = get_headpose_batch(batch_images, model, device)
+
+                for hp in headposes:
+                    if hp is not None:
+                        pitch, yaw, roll, cx, cy = hp
+                        pitch_vals.append(pitch)
+                        yaw_vals.append(yaw)
+                        roll_vals.append(roll)
+                        trans_x_vals.append(cx)
+                        trans_y_vals.append(cy)
+                pbar.update(len(batch_images))
+
+                batch_images = []
+
+    cap.release()
+
+    if not pitch_vals:
+        print(f"Warning: No faces detected in {video_path}. Skipping metrics computation.")
+        return None
+
+    pitch_smoothness, yaw_smoothness, roll_smoothness = calculate_metrics(pitch_vals, yaw_vals, roll_vals)
+    head_motion_dynamics = measure_head_motion_dynamics(pitch_vals, yaw_vals, roll_vals, trans_x_vals, trans_y_vals)
+
+    return {
+        "pitch_smoothness": pitch_smoothness,
+        "yaw_smoothness": yaw_smoothness,
+        "roll_smoothness": roll_smoothness,
+        "head_motion_dynamics": head_motion_dynamics,
+    }
+
+def load_model(model_path, device):
+    if FaceXFormer is None:
+        raise RuntimeError(
+            "FaceXFormer is required for head motion dynamics. "
+            "Install/download it into models/facexformer; see the README."
+        )
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"FaceXFormer checkpoint not found at {model_path}. "
+            "Download ckpts/model.pt before running this metric."
+        )
+    device = torch.device(device if torch.cuda.is_available() else "cpu")
+    model = FaceXFormer().to(device)
+    checkpoint = torch.load(model_path, map_location=device)
+    model.load_state_dict(checkpoint['state_dict_backbone'])
+    model.eval()
+    return model, device
+
+def evaluate_videos(video_paths, model_path, output_path, device="cuda:0"):
+    model, device = load_model(model_path, device)
+
+    metrics_list = []
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+    with open(output_path, 'w') as outfile:
+        outfile.write("Video Path,Pitch Smoothness,Yaw Smoothness,Roll Smoothness,Head Motion Dynamics\n")
+        outfile.flush()
+
+        with tqdm(total=len(video_paths), desc="Evaluating Videos") as pbar_videos:
+            for video_path in video_paths:
+                try:
+                    metrics = analyze_video(video_path, model, device)
+                    if metrics is not None:
+                        metrics_list.append(metrics)
+                        outfile.write(
+                            f"{video_path},{metrics['pitch_smoothness']:.6f},"
+                            f"{metrics['yaw_smoothness']:.6f},"
+                            f"{metrics['roll_smoothness']:.6f},"
+                            f"{metrics['head_motion_dynamics']:.6f}\n"
+                        )
+                        outfile.flush()
+
+                except Exception as e:
+                    print(f"Error processing video {video_path}: {e}")
+                    pbar_videos.update(1)
+                    continue
+
+                pbar_videos.update(1)
+
+        if not metrics_list:
+            print("No valid metrics to compute. Exiting.")
+            return
+
+        head_motion_dynamics_values = [m['head_motion_dynamics'] for m in metrics_list]
+
+        mean_head_motion_dynamics = np.mean(head_motion_dynamics_values) if head_motion_dynamics_values else 0.0
+
+    with open(output_path, 'a') as outfile:
+        outfile.write("\n=== Evaluation Summary ===\n")
+        outfile.write(f"Mean head motion dynamics: {mean_head_motion_dynamics:.6f}\n")
+
+    print("\n=== Evaluation Results ===")
+    print(f"Mean head motion dynamics: {mean_head_motion_dynamics:.6f}")
+    print(f"\nDetailed metrics have been saved to: {output_path}")
+
+def read_video_paths(txt_file):
+    if not os.path.isfile(txt_file):
+        print(f"Error: The file {txt_file} does not exist.")
+        return []
+    with open(txt_file, 'r') as f:
+        paths = [line.strip() for line in f if line.strip()]
+    return paths
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate videos for head motion dynamics.")
+    parser.add_argument('--video_txt', type=str, required=True, help="Path to the text file containing video paths.")
+    parser.add_argument('--model_path', type=str, default=str(DEFAULT_MODEL_PATH), help="Path to the FaceXFormer model checkpoint.")
+    parser.add_argument('--output_txt', type=str, required=True, help="Path to the output text file to save metrics.")
+    parser.add_argument('--device', type=str, default="cuda:0", help="Device to run the model on. e.g., 'cuda:0' or 'cpu'.")
+    args = parser.parse_args()
+
+    video_paths = read_video_paths(args.video_txt)
+    if not video_paths:
+        print("No video paths found. Exiting.")
+        return
+
+    evaluate_videos(video_paths, args.model_path, args.output_txt, args.device)
+
+if __name__ == "__main__":
+    main()
