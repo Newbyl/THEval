@@ -178,11 +178,13 @@ dataset and use those GT values instead of `examples/gt_metrics.csv`.
 ## Citation
 
 ```bibtex
-@inproceedings{quignon2026theval,
-  title={THEval: A Comprehensive Framework for Evaluating Talking Head Generation},
-  author={Quignon, Nabyl and Chopin, Baptiste and Wang, Yaohui and Dantcheva, Antitza},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Findings},
-  year={2026}
+@InProceedings{Quignon_2026_CVPR,
+    author    = {Quignon, Nabyl and Chopin, Baptiste and Wang, Yaohui and Dantcheva, Antitza},
+    title     = {THEval. Evaluation Framework for Talking Head Video Generation},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Findings},
+    month     = {June},
+    year      = {2026},
+    pages     = {1943-1953}
 }
 ```
 
